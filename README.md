@@ -1,33 +1,35 @@
-# 🎬 What Factors Drive a Movie's Financial Success?
+# 📊 UCSB Data Science & Statistical Coursework
 
-> **A Correlational Analysis of Budget, Genre, and Audience Reception on Movie Profitability**  
-> UCSB PSTAT 100 Final Project | Collaborators: Manmeet Shergill, Jiho Shin
-
-[📄 Click here to view the Full PDF Report](./movie_profitability.pdf)
+This repository contains academic data science and statistical analysis projects completed at the University of California, Santa Barbara (UCSB). Each project demonstrates applied statistical modeling, data cleaning pipelines, and reproducible reporting using R and Quarto.
 
 ---
 
-## 📌 Project Overview
-Using the **TMDB 5000 Movie Dataset**, this study investigates the key drivers behind film profitability (Net Profit = Revenue - Budget) and Return on Investment (ROI). We parsed complex JSON metadata, performed Exploratory Data Analysis (EDA), and conducted Pearson correlation tests and OLS regression to assess whether audience reception, marketing presence, or budget best explains commercial success.
+## 📌 Featured Projects
+
+### 1. [What Factors Drive a Movie's Financial Success?](./Project1-Movie-Profitability/)
+* **Focus**: Exploratory Data Analysis, Non-linear Patterns, Pearson Correlation, and OLS Regression.
+* **Key Findings**: 
+  * Marketing reach and volume of engagement (`vote_count`: $r = 0.74$, `popularity`: $r = 0.59$) correlate significantly more strongly with net profit than raw audience rating (`vote_average`: $r = 0.23$).
+  * Production budget scales gross profit ($r = 0.55$) but shows essentially no linear relationship with capital return efficiency / ROI ($r = -0.02$).
+  * **Animation** demonstrated the most consistent high median return, whereas Adventure and Sci-Fi returns were driven by rare blockbuster outliers.
+* **Tech Stack**: R, Quarto, `tidyverse` (`dplyr`, `ggplot2`), `jsonlite`, `janitor`, `corrplot`
+* **Artifacts**: [📄 View Full PDF Report](./Project1-Movie-Profitability/movie_profitability.pdf) | [Source Code](./Project1-Movie-Profitability/movie_profitability.qmd)
 
 ---
 
-## 🔍 Key Findings
-* **Marketing & Reach > Audience Ratings**: Vote count ($r = 0.74$) and popularity score ($r = 0.59$) exhibit strong positive correlations with net profit, whereas audience rating (`vote_average`) showed a weak correlation ($r = 0.23$).
-* **Profit vs. ROI Disconnect**: Higher budgets generate larger gross profits ($r = 0.55$), but show essentially zero correlation with ROI ($r = -0.02$). Scale does not guarantee capital efficiency.
-* **Genre Trends**: 
-  * **Animation** demonstrated the most consistent high returns (mean profit: $198M, median: $125M).
-  * **Adventure, Fantasy, and Sci-Fi** showed high means driven primarily by extreme blockbuster outliers rather than consistent performance.
+### 2. [Socioeconomic Disparities & Family Poverty Analysis](./Project2-US-Socioeconomic-Analysis/)
+* **Focus**: Relational Multi-table Joins, Demographic Stratification, and Multiple Linear Regression.
+* **Dataset**: Based on the U.S. Census Bureau Current Population Survey (CPS) 2024 Annual Social and Economic Supplement (ASEC).
+* **Key Findings**:
+  * Successfully harmonized and joined three microdata levels (Household, Family, and Geographic FIPS codes).
+  * Evaluated regional income divides across the Northeast, Midwest, South, and West.
+  * Estimated multiple regression models showing statistically significant negative effects of family size (`FPERSONS`) and specific regional baselines on the income-to-poverty ratio.
+* **Tech Stack**: R, Quarto, `tidyverse`, `sjPlot`, `scales`
+* **Artifacts**: [📄 View Full PDF Report](./Project2-US-Socioeconomic-Analysis/Mid_Quarter_Project_Report.pdf) | [Source Code](./Project2-US-Socioeconomic-Analysis/Mid_Quarter_Project_Report.qmd)
 
 ---
 
-## 🛠 Tech Stack
-* **Language & Environment**: R, RStudio, Quarto (`.qmd`)
-* **Libraries**: `tidyverse` (`dplyr`, `ggplot2`), `jsonlite`, `janitor`, `corrplot`, `kableExtra`
-
----
-
-## 📁 Repository Structure
-* `movie_profitability.qmd`: Complete Quarto source code containing data cleaning, JSON parsing, modeling, and visualizations.
-* `movie_profitability.pdf`: Final rendered PDF research paper.
-* `tmdb_5000_movies.csv`: TMDB 5000 movie metadata.
+## 🔒 Data Access & Academic Integrity Note
+* **Public Data**: The TMDB 5000 dataset in Project 1 is sourced from Kaggle under open database licensing.
+* **Restricted Data**: Datasets for Project 2 (`hhpub24-2.csv`, `ffpub24-1.csv`, `fips_abbrev-1.csv`) are proprietary course materials and are intentionally excluded from this repository in accordance with institutional data policies and UCSB Academic Integrity guidelines.
+* All code and reports are shared strictly for educational portfolio presentation and code review.
