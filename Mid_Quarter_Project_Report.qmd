@@ -1,0 +1,165 @@
+---
+title: "Mid-Quarter Project Report"
+author: "Jiho Shin"
+date: today
+format: pdf
+execute:
+  echo: false
+---
+
+# Introduction
+
+This project explores the socioeconomic structures of American families and families using the Census (CPS) Annual Social and Economic Supplemental Data (ASEC) dataset as of 2024. Understanding how income and poverty are distributed across the boundaries of demographic and geographic sectors is critical for assessing gaps in opportunities for education, stability in the local economy, and at the system level. This report dynamically investigates these relationships by applying data science processes, exploratory data analysis, and regression modeling.
+
+# Data and sources
+
+Our analysis integrates three separate tables to reconstruct a comprehensive master dataframe:
+- `hhpub24-2.csv`: Household-level economic and geographic attributes.
+- `ffpub24-1.csv`: Family-level demographic variables and poverty thresholds.
+- `fips_abbrev-1.csv`: Geographic FIPS codes mapped to state names and abbreviations.
+The data processing involves ensuring that numbers and letter types are correctly matched and reliably linked to each other between three given datasets, and addressing variable name mismatches (e.g., family FH_SEQ matching) to build a clean data frame by filtering missing or negative income values.
+
+
+```{r}
+#| message: false
+#| warning: false
+library(tidyverse)
+household <- read_csv("data/hhpub24-2.csv")
+family <- read_csv("data/ffpub24-1.csv")
+fips <- read_csv("data/fips_abbrev-1.csv",
+skip = 1, col_names = c("state_name", "fips_code", "state_abbrev"),
+show_col_types = FALSE)
+
+fips <- fips %>% 
+  mutate(fips_code = as.numeric(fips_code)) %>%
+  filter(!is.na(fips_code))
+
+mqp_data <- household %>%
+  mutate(H_SEQ = as.numeric(H_SEQ)) %>%
+  left_join(family %>% mutate(FH_SEQ = as.numeric(FH_SEQ)),
+  by = c("H_SEQ" = "FH_SEQ")) %>%
+  left_join(fips, by = c("GESTFIPS" = "fips_code")) %>%
+  select(H_SEQ, state_name, state_abbrev, GEREG,
+  FPERSONS, FTOTVAL, HTOTVAL, FPOVCUT) %>%
+  mutate(
+    income_poverty_ratio = FTOTVAL / FPOVCUT,
+    region_factor = factor(GEREG, levels = c(1, 2, 3, 4),
+    labels = c("Northeast", "Midwest", "South", "West"))
+  ) %>%
+  filter(!is.na(FTOTVAL) & !is.na(HTOTVAL)) %>% 
+  filter(FTOTVAL >= 0 & HTOTVAL >= 0)
+```
+
+
+# Household-level analysis
+
+Through our Exploratory Data Analysis (EDA) at the household and state levels, we aggregate the data to evaluate geographic disparities. The income gap across different parts of the United States was larger than expected, and in some states, the average family income was significantly higher than in others. Below is the visualization showing the top 20 states ranked by their mean family total income.
+
+
+```{r}
+#| message: false
+#| warning: false
+state_summary <- mqp_data %>%
+  group_by(state_name, state_abbrev) %>%
+  summarize(
+    total_families = n(),
+    mean_family_income = mean(FTOTVAL, na.rm = TRUE),
+    median_family_income = median(FTOTVAL, na.rm = TRUE),
+    mean_poverty_ratio = mean(income_poverty_ratio, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(mean_family_income))
+
+top_20_states <- head(state_summary, 20)
+#I got some support to find error of this ggplpot. 
+ggplot(top_20_states, aes(x = reorder(state_name, mean_family_income),
+      y = mean_family_income, fill = mean_family_income)) +
+  geom_col() +
+  coord_flip() + 
+  scale_y_continuous(labels = 
+    scales::dollar_format()) +
+  scale_fill_gradient(low = "lightgreen", high = "darkgreen") +
+  labs(
+    title = "Top 20 States by Mean Family Total Income",
+    subtitle = "Analysis based on CPS ASEC 2024",
+    x = "State",
+    y = "Mean Family Income (USD)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+
+# Family-level analysis
+
+Shifting our scope to family-level characteristics, we look at how demographic features interact with broad regions. Our boxplot analysis details the broader regional income distribution across the country. Furthermore, our visualization results clearly show a declining trend in income-to-poverty ratios with larger family sizes. This suggests that relatively large households could be worse off economically.
+
+
+
+```{r}
+#| message: false
+#| warning: false
+ggplot(mqp_data, aes(x = region_factor, y = FTOTVAL, fill = region_factor)) +
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.1) +
+  scale_y_continuous(labels = scales::dollar_format(),
+  limits = c(0, 300000)) +
+  labs(
+    title = "Distribution of Family Total Income by US Region",
+    subtitle = "Analysis based on CPS ASEC 2024 Data",
+    x = "Region",
+    y = "Family Total Income (USD)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggplot(mqp_data, aes(x = FPERSONS, y = income_poverty_ratio)) +
+  geom_jitter(alpha = 0.1, color = "blue", width = 0.2) +
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  scale_y_continuous(limits = c(0, 15)) +
+  labs(
+    title = "Income-to-Poverty Ratio by Family Size",
+    subtitle = "Red line indicates the linear trend",
+    x = "Number of Persons in Family",
+    y = "Income / Poverty Threshold Ratio"
+  ) +
+  theme_minimal()
+```
+
+
+Regression analysis showed that family size (FPHERS) had a statistically significant negative effect on the poverty rate to income. The graph shows that larger family sizes are more likely to bring the family sample closer to the baseline, indicating that family size and the likelihood of economic vulnerability are proportional. Regional factors are also identified as important factors for measuring economic vulnerability.
+
+
+```{r}
+#| message: false
+#| warning: false
+mqp_model <- lm(income_poverty_ratio ~ FPERSONS
+        + region_factor, data = mqp_data)
+summary(mqp_model)
+#AI used to write code for sjplot.
+library(sjPlot) 
+if (requireNamespace("sjPlot", quietly = TRUE)) {
+  plot_model(mqp_model, type = "est", 
+             title = "Effects on Income-to-Poverty Ratio",
+             show.values = TRUE, value.offset = .3) +
+    theme_minimal()
+}
+```
+
+
+# Conclusion
+
+The hypotheses observed in early EDAs were demonstrated by regression analysis, which showed that both demographic and geographic factors had a significant level of influence on the socioeconomic structure of American families. These results indicate that local standards and household size determine the economic level of a household at the same time.
+
+# References
+
+U.S. Census Bureau. (2024). Current Population Survey (CPS) Annual Social and Economic Supplement (ASEC).
+
+Stanford Education Data Archive (SEDA). (2018). Achievement Gaps National Analysis Reference.
+
+# Appendix: Code {.appendix}
+
+```{r}
+#| ref-label: !expr knitr::all_labels()
+#| echo: true
+#| eval: false
+```
