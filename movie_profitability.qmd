@@ -1,0 +1,457 @@
+---
+title: "What Factors Drive a Movie's Financial Success?"
+subtitle: "A correlational analysis of budget, genre, and audience reception on a Movie's profitability"
+author: "STUDENT NAME(S): Manmeet Shergill & Jiho Shin"
+date: today
+format: 
+  pdf:
+    code-fold: true
+    code-line-numbers: true
+    code-copy: true
+    code-tools: true
+    self-contained: true
+    toc: false
+    toc-location: left
+    number-sections: true
+    geometry: margin=0.75in
+    fig-width: 8
+    fig-height: 5
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(error = FALSE)
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(fig.align = 'center')
+library(tidyverse)
+library(jsonlite)
+library(janitor)
+library(knitr)
+library(kableExtra)
+library(corrplot)
+library(scales)
+```
+
+# Introduction
+
+**Statement and Objective**
+
+Billions of dollars are spent on film production every year. Additionally, when a movie has significant cultural impact, it becomes a central topic of public discussion, and even related movies and YouTube videos receive millions of views. In addition, as there are various jobs related to film production, many people are in the industry, so it has a critical financial and professional impact on numerous stakeholders. Therefore, We believe that film companies need to analyze what the most important factor in film production in order to achieve success with limited resources.
+
+To address this need, our projects research question is to investigates which critical factors (such as budget, public interest, audience ratings, or genre) has the most substantial impact on a movie's financial outcome. Rather than simply evaluating gross revenue, we focus on net profit (Revenue - Budget) and the ratio between net profit and budget as the core target metric to better reflect true commercial success. Using the TMDB 5000 Movie Dataset, we perform exploratory data analysis and statistical modeling to provide data-driven insights into how film production studios can optimize their resources for maximum profitability.
+
+# Data
+
+**Data Sources**
+
+The core dataset used for this report is the TMDB 5000 Movie Dataset which we found off of Kaggle.com posted by The Movie Database (TMDB) and one other collaborator 9 years ago in 2017. The data set contains 4803 rows each accounting for an individual movie entry, and 20 columns that specify notable details of the movies. The following are the names of each column:
+
+- "budget", "genres", "homepage", "id", "keywords", "original_language", "original_title", "overview", "popularity", "production_companies", "production_countries", "release_date", "revenue", "runtime", "spoken_languages", "status", "tagline", "title", "vote_average", "vote_count".
+
+In this analysis however we won't be using all of these columns and will primarily focus on using budget, revenue, popularity, vote_average, vote_count, genres, production companies, release_date, title, id.
+
+```{r load-data}
+movies_raw <- read_csv("tmdb_5000_movies.csv") |> clean_names()
+colnames(movies_raw)
+```
+
+Note: The columns were stored as JSON-formatted strings instead of plain text, so they need to be parsed before they can be used. So we use json functions to splice the strings.
+
+```{r json-helper}
+parse_json_names <- function(json_str) {
+  if (is.na(json_str) || json_str == "" || json_str == "[]") return(NA_character_)
+  res <- tryCatch(fromJSON(json_str), error = function(e) NULL)
+  if (is.data.frame(res) && "name" %in% colnames(res)) {
+    return(paste(res$name, collapse = ", "))
+  }
+  return(NA_character_)
+}
+```
+
+```{r clean-data}
+movies_clean <- movies_raw %>%
+  filter(budget > 0 & revenue > 0) %>% 
+  mutate(
+    profit = revenue - budget,
+    roi = profit / budget,
+    release_year = year(as.Date(release_date))
+  )
+```
+
+```{r missingness-table}
+movies_by_genre <- movies_clean %>% 
+  mutate(genre_list = map(genres, ~ {
+    if (is.na(.x) || .x == "" || .x == "[]") 
+      return(character(0))
+    res <- tryCatch(fromJSON(.x),
+                    error = function(e) NULL)
+    if (is.data.frame(res) &&
+        "name" %in% colnames(res)) res$name else character(0)
+  })) %>% 
+  unnest(genre_list) %>% 
+  rename(genre = genre_list)
+```
+
+**Analysis of Data Cleaning:**
+
+Among the 4,803 movies in the dataset, 1,574 movies (32.77%) were dropped due to missing or zero values in either their reported budget or revenue. Based on the visualizations and summary tables, this data loss is not entirely random. The dropped observations tend to be concentrated in older release periods (particularly pre-2000s) where financial tracking was less publicly disclosed. Furthermore, the missing data is heavily prevalent among relatively minor categories such as Documentaries and Foreign films, as well as lower-budget independent productions. In contrast, modern mainstream blockbusters tend to have complete financial records.
+
+**Exploratory Data Analysis**
+
+```{r missing-profit-dist}
+total_movies <- nrow(movies_raw)
+
+dropped_df <- movies_raw %>% 
+  filter(is.na(budget) | budget == 0 |
+           is.na(revenue) | revenue == 0)
+
+retained_df <- movies_raw %>% 
+  filter(!is.na(budget) & budget > 0 &
+           !is.na(revenue) & revenue > 0)
+
+dropped_count <- nrow(dropped_df)
+dropped_pct <- (dropped_count / total_movies) * 100
+
+cat(sprintf("Total initial records: %s\n",
+            comma(total_movies)))
+cat(sprintf("Movies dropped (missing/zero budget or revenue):
+            %s (%.2f%%)\n", comma(dropped_count), dropped_pct))
+cat(sprintf("Remaining movies after data cleaning: %s\n\n",
+            comma(nrow(retained_df))))
+
+movies_raw %>%
+  mutate(
+    release_year = year(as.Date(release_date)),
+    status = ifelse(is.na(budget) | budget == 0 |
+                      is.na(revenue) | revenue == 0,
+                    "Dropped", "Retained")
+  ) %>%
+  ggplot(aes(x = release_year, fill = status)) +
+  geom_histogram(binwidth = 2, position = "stack",
+                 color = "white", alpha = 0.8) +
+  scale_fill_manual(values = c("Dropped" = "darkorange",
+                               "Retained" = "lightblue")) +
+  labs(
+    title = "Figure 1: Distribution of Retained vs. Dropped Movies by Release Year",
+    x = "Release Year",
+    y = "Number of Movies",
+    fill = "Status"
+  ) +
+  theme_minimal()
+```
+
+```{r missing-genre-counts}
+raw_by_genre <- movies_raw %>% 
+  mutate(genre_list = map(genres, ~ {
+    if (is.na(.x) || .x == "" || .x == "[]") 
+      return(character(0))
+    res <- tryCatch(fromJSON(.x), 
+                    error = function(e) NULL)
+    if (is.data.frame(res) && "name" %in%
+        colnames(res)) res$name else character(0)
+  })) %>% 
+  unnest(genre_list) %>% 
+  rename(genre = genre_list)
+
+
+genre_summary <- raw_by_genre %>% 
+  mutate(is_dropped = is.na(budget) | budget == 0 | is.na(revenue) | revenue == 0) %>% 
+  group_by(genre) %>% 
+  summarise(
+    total_count = n(),
+    dropped_count = sum(is_dropped),
+    retained_count = sum(!is_dropped),
+    drop_rate = (dropped_count / total_count) * 100
+  ) %>% 
+  arrange(desc(drop_rate))
+
+#AI used to code this part with kable function.
+genre_summary %>% 
+  head(10) %>% 
+  kable(
+    col.names = c("Genre", "Total Movies",
+                  "Dropped", "Retained", "Drop Rate (%)"),
+    digits = 1,
+    caption = "Top 10 Genres by Dropped Data Percentage"
+  ) %>% 
+  kable_styling(latex_options = "hold_position")
+```
+
+```{r missing-genre-plot}
+genre_summary %>% 
+  filter(total_count >= 20) %>% 
+  ggplot(aes(x = reorder(genre, drop_rate), y = drop_rate)) +
+  geom_col(fill = "darkred", alpha = 0.85) +
+  coord_flip() +
+  labs(
+    title = "Figure 2: Data Drop Rate by Genre (Budget/Revenue Missing or 0)",
+    x = "Genre",
+    y = "Drop Percentage (%)"
+  ) +
+  theme_minimal()
+```
+
+**Analysis of Exploratory Data:**
+
+After isolating the clean and usable data, the distribution of movie profits exhibits a strong right skew as seen in figure 1. The vast majority of films cluster around modest profit margins, while a select few blockbuster outliers stretch the tail with exceptionally high returns. When analyzing genre representation, "Drama" and "Comedy" are the most frequently occurring genres, providing a robust sample size for statistical analysis as seen in table 1. On the other hand, niche genres like "TV Movie," "Foreign," and "Documentary" are less represented. Because these underrepresented genres have too few observations to support reliable comparisons, any conclusions drawn regarding their average profitability or financial trends will be interpreted with extreme caution.
+
+# Methodology
+
+Net Profit (calculated for each movie):
+
+```{r eq-profit}
+cat("Profit = Revenue - Budget")
+```
+
+Return on Investment (calculated for each movie):
+
+```{r eq-roi}
+cat("ROI = Profit / Budget")
+```
+
+Pearson correlation coefficient, computed pairwise between budget, popularity, vote_average, vote_count, and profit, where x and y are each pair of variables being compared, x\_ and y\_ are their means, and x_i, y_i are individual movie observations:
+
+```{r eq-pearson}
+cat("r = sum((x_i - x_bar) * (y_i - y_bar)) / sqrt(sum((x_i - x_bar)^2) * sum((y_i - y_bar)^2))")
+```
+
+Ordinary least squares (OLS) regression line, fit between vote_average and profit, where y_hat is predicted net profit, x is audience rating (vote_average), B0 is the intercept, and B1 is the slope:
+
+```{r eq-ols}
+cat("y_hat = B0 + B1 * x")
+```
+
+Genre-level summaries (mean/median profit, mean popularity) are computed on a long-format table with one row per movie-genre pair, since movies can belong to multiple genres.
+
+```{r correlation-matrix}
+numeric_vars <- movies_clean |>
+  select(budget, popularity, vote_average, vote_count, profit, roi)
+
+cor_matrix <- cor(numeric_vars, use = "complete.obs", method = "pearson")
+```
+
+# Results
+
+## Part I: Which Factors Correlate Most With Profit?
+
+```{r plot-correlation-matrix}
+corrplot(cor_matrix, method = "color", type = "upper", addCoef.col = "black",
+        tl.srt = 45,
+        title = "Figure 3: Correlation Between Movie Factors and Outcomes", mar = c(0, 0, 2, 0))
+```
+
+```{r correlation-table}
+cor_matrix |>
+  as.data.frame() |>
+  rownames_to_column("Variable") |>
+  kable(digits = 2, caption = "Pairwise Correlations Between Movie Factors and Outcomes")
+```
+
+**Analysis of Correlation Matrix:**
+
+When analyzing the relationship of the factors, vote_count shows the strongest correlation at r = 0.74, followed by popularity with a r = 0.59 and budget with a r = 0.55. Notably vote_average (audience rating) is weakly correlated with profit at r = 0.23. This suggests that how much a film is able to generate hype/attention for a film, as shown through vote count and popularity tracks financial success more closely than how well it is actually rated by viewers. Meaning being seen and talked about is more tied to profitability than a movie being rated good or bad by viewers. However something important to note is that profit and ROI tell very different stories, as none of the factors show a meaningful correlation with ROI with all of them having a r\< 0.04, including budget itself with a r = -0.02. Meaning that while bigger-budget and more popular films tend to generate more profit when strictly talking about a movies revenue, they are not more efficient at doing so relative to budget of the film. So larger investments do not reliably give proportionally large returns. This is heavily important in the matters of interpreting "success" as a factor that predicts high profit does not necessarily predict a good return on investment.
+
+```{r genre-profit-summary}
+genre_summary <- movies_by_genre[!is.na(movies_by_genre$genre), ]
+
+genre_list <- unique(genre_summary$genre)
+
+results <- data.frame(genre = character(), n_movies = numeric(),
+                      mean_profit = numeric(), median_profit = numeric(),
+                      mean_popularity = numeric())
+
+for (g in genre_list) {
+  temp <- genre_summary[genre_summary$genre == g, ]
+  results <- rbind(results, data.frame(
+    genre = g,
+    n_movies = nrow(temp),
+    mean_profit = mean(temp$profit, na.rm = TRUE),
+    median_profit = median(temp$profit, na.rm = TRUE),
+    mean_popularity = mean(temp$popularity, na.rm = TRUE)
+  ))
+}
+
+genre_summary <- results[order(-results$mean_profit), ]
+```
+
+```{r plot-genre-profit}
+genre_summary$profit_millions <- genre_summary$mean_profit / 1000000
+
+ggplot(genre_summary, aes(x = genre, y = profit_millions, fill = mean_profit)) +
+  geom_col() +
+  coord_flip() +
+  theme_minimal() +
+  scale_fill_distiller(palette = "Oranges", direction = 1) +
+  labs(title = "Figure 4: Average Net Profit by Genre", x = "Genre", y = "Mean Net Profit (Millions)", fill = "Mean Profit")
+```
+
+```{r genre-profit-table}
+genre_summary |>
+  select(genre, n_movies, mean_profit, median_profit, mean_popularity) |>
+  kable(digits = 0, caption = "Genre-Level Summary: Movie Count, Profit, and Popularity",
+      col.names = c("Genre", "N Movies", "Mean Profit", "Median Profit", "Mean Popularity"))
+```
+
+**Analysis of Genre vs. Profit:**
+
+Animation shows both the highest mean at \$198.1M and median at \$125.5M profit, with the two staying relatively close meaning that there are consistent strong returns. Adventure, Fantasy, and Family also rank high on mean profit, but each shows a large mean-median gap, with Science Fiction being the worst aggressor of this with a mean of \$125.6M and a median of \$35.5M. Indicating their profitability is driven by a handful of blockbusters rather than average overall performance. Drama and Comedy are made far more often than any other genre with 1,441 and 1,110 films respectively, but rank lower in profitability, showing that volume doesn't mean good returns. Action combines both scale and profit with 918 films and a \$114.4M mean, while Western, Documentary, and especially Foreign are too small a sample to draw a real conclusions from. Taking all of this into account, Animation and Action stand out as the genres with the most potential, with Animation having consistent per-film profitability, and Action for having a good middle ground of profitability with production volume. While Adventure, Fantasy, and Science Fiction, have high averages being driven more by outliers than consistent profits.
+
+## Part II: Popularity vs. Audience Rating
+
+```{r plot-popularity-vs-rating}
+movies_clean %>%
+  ggplot(aes(x = vote_average, y = popularity,
+             color = profit)) +
+  geom_point(alpha = 0.7, size = 1.5) +
+  scale_color_viridis_c(option = "plasma",
+                        labels = comma, name = "Net Profit ($)") +
+  labs(
+    title = "Figure 5: Movie Popularity vs. Audience Rating",
+    subtitle = "Color-coded by Net Profit",
+    x = "Audience Rating (Vote Average)",
+    y = "Popularity Score"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "right")
+```
+
+**Analysis of Popularity vs. Rating:**
+
+The scatter plot and correlation matrix reveal that popularity and audience rating (vote_average) show only a weak positive relationship (r\~= 0.29). This means that widely watched and popular movies are not necessarily the best-received ones. Therefore, popularity often reflects the scope of marketing or the recognition of a franchise, rather than purely recognition from people or the completion of a movie. In addition, by coloring the dots differently according to their net profit, we were able to find a pattern. The most financially successful films, or brightly colored dots on the plot, are clustered in a comfortable rating range of 6.0 to 7.5. This means typical mainstream blockbuster films that prioritize popularity over critical acclaim. It should also be noted that movies with overrated ratings of 7.5 are not short on profit. In fact, these masterpieces tend to outperform the average of the entire dataset in both popularity and revenue. The point where the phenomenon that goes beyond our expectations is rather in movies low in ratings. This is because there are cases where some films with poor reviews still earn high popularity scores and earn profits only due to external factors such as great expectations or brand recognition (IP) before release.
+
+## Part III: Audience Rating vs. Net Profit
+
+```{r plot-rating-vs-profit}
+movies_clean %>%
+  ggplot(aes(x = vote_average, y = profit)) +
+  geom_point(alpha = 0.5, color = "darkgrey") +
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Figure 6: Net Profit vs. Audience Rating",
+    subtitle = "With Ordinary Least Squares (OLS) Trend Line",
+    x = "Audience Rating (Vote Average)",
+    y = "Net Profit ($)"
+  ) +
+  theme_minimal()
+```
+
+```{r rating-profit-cor-test}
+cor_test_result <- cor.test(movies_clean$vote_average,
+                            movies_clean$profit, method = "pearson")
+cor_test_result
+```
+
+```{r rating-profit-results-table}
+tibble(
+  `Variable X` = "Vote Average",
+  `Variable Y` = "Net Profit",
+  `Correlation (r)` = cor_test_result$estimate,
+  `p-value` = cor_test_result$p.value
+) %>%
+  kable(digits = 4, caption = "Pearson Correlation Test: Rating vs. Profit") %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+**Analysis of Rating vs. Profit:**
+
+To test whether the true correlation between audience rating and profit is zero we must use the a Pearson Correlation. Once we used the Pearson correlation we see that the coefficient was about r = 0.23, and the p-value was less than 0.0001 with a test-statistic of t = 13.428. Since the p-value is extremely small, we reject the null hypothesis and conclude that the correlation is statistically significant, but its strength is not very large. Audience evaluation explains only about 5.3% of the variation in film revenue (r squared). A scatter plot also shows that many films with similar ratings earned very different revenues, indicating that audience ratings alone cannot accurately predict revenue. Some blockbuster films like Avatar and Star Wars earned very high box office revenues despite having ratings clustered around 7.0 to 8.0, and these films affect the fitted OLS trend line. Overall, higher audience ratings are associated with higher revenue, but that relationship is fairly weak.
+
+```{r rating-profit-lm}
+rating_profit_lm <- lm(profit ~ vote_average, data = movies_clean)
+lm_coefs <- coef(rating_profit_lm)
+
+cat(sprintf("Fitted line of best fit:\ny_hat = %s + %s * x\n\nwhere y_hat = predicted net profit ($), and x = audience rating (vote_average)",
+            comma(round(lm_coefs[1], 2)),
+            comma(round(lm_coefs[2], 2))))
+```
+
+## Conclusion
+
+**KEY FINDINGS SUMMARY**
+
+To conclude, the overall financial success is driven more by a film's marketing and visibility than by how audiences like it. With vote count at r = 0.74, popularity at r = 0.59, and budget at r = 0.55 we can see that these factors correlate the strongest with net profit, while audience rating at r = 0.23 rarely matters compared to the rest. However when looking at the question in the scope of ROI (profit / budget) we see that none of these factors provide a meaningful prediction, i.e. higher budgets generate bigger profits but no proportionally better returns on investment. When determining which genre aided the most in financial success we saw that Animation was the most consistent in profitability while Action was the best balance in sheer numbers and returns. Adventure, Fantasy and Science Fiction owe their high averages to a few blockbuster outliers rather than consistent overall performance. In tandem, these findings suggest for a small studio with limited resources prioritizing visibility and audience reach is more important than audience ratings, while also choosing genres with realistic returns for their investment.
+
+**LIMITATIONS**
+
+First of all what we have proven is correlation, not causation. These relationships don't establish that higher budget or popularity causes higher profit. Also factors like franchise recognition, release timing, marketing spending, and director/lead actors aren't captured in this dataset. A second limitation would be the zero/missing budget and revenue values. Where 1,574 movies, around 33%, were dropped for either zero or missing budget or revenue. This primarily affects older, low-budget films, and niche genres. There is also the issue of multi-genre movie, or a movie tagged with several genres which contributes to each genre's summary statistics, so genre comparisons aren't statistically independent of one another. Theres also no inflation adjustment so budgets and revenues are taken without adjusting for inflation, which could inflate the profitability of more recent releases compared to older ones. Finally the dataset only includes movies notable enough to be catalogued by TMDB, so conclusions should not be generalized to all films ever produced.
+
+# References {.unnumbered}
+
+- Used AI on JSON parsing and some Kable Functions. Also used to streamline code and helpe display functions neatly.
+
+  - [https://gemini.google.com/u/1/app?utm_source=app_launcher&utm_medium=owned&utm_campaign=base_all](ttps://gemini.google.com/u/1/app?utm_source=app_launcher&utm_medium=owned&utm_campaign=base_all)
+
+  - [https://chat.deepseek.com](https://chat.deepseek.co)
+
+- Data Set Website:
+
+  - <https://www.kaggle.com/datasets/tmdb/tmdb-movie-metadata?select=tmdb_5000_movies.csv>
+
+\newpage
+
+# Appendix {.unnumbered}
+
+**A.1 Setup & Package Loading**
+
+```{r appendix-setup}
+#| label: appendix-setup
+#| ref.label: "setup"
+#| echo: true
+#| eval: false
+```
+
+**A.2 Loading and Cleaning the Data**
+
+```{r appendix-data-cleaning}
+#| label: appendix-data-cleaning
+#| ref.label: !expr c("load-data", "parse-json-helper", "clean-data")
+#| echo: true
+#| eval: false
+```
+
+**A.3 Exploratory Data Analysis**
+
+```{r appendix-eda}
+#| label: appendix-eda
+#| ref.label: !expr c("missingness-table", "eda-profit-dist", "eda-genre-counts")
+#| echo: true
+#| eval: false
+```
+
+**A.4 Methodology: Correlation Matrix Setup**
+
+```{r appendix-methodology}
+#| label: appendix-methodology
+#| ref.label: !expr c("eq-profit", "eq-roi", "eq-pearson", "eq-ols", "correlation-matrix")
+#| echo: true
+#| eval: false
+```
+
+**A.5 Results, Part I: Factors vs. Profit**
+
+```{r appendix-results-1}
+#| label: appendix-results-1
+#| ref.label: !expr c("plot-correlation-matrix", "correlation-table", "genre-profit-summary", "plot-genre-profit", "genre-profit-table")
+#| echo: true
+#| eval: false
+```
+
+**A.6 Results, Part II: Popularity vs. Rating**
+
+```{r appendix-results-2}
+#| label: appendix-results-2
+#| ref.label: "plot-popularity-vs-rating"
+#| echo: true
+#| eval: false
+```
+
+**A.7 Results, Part III: Rating vs. Profit**
+
+```{r appendix-results-3}
+#| label: appendix-results-3
+#| ref.label: !expr c("plot-rating-vs-profit", "rating-profit-cor-test", "rating-profit-results-table", "rating-profit-lm")
+#| echo: true
+#| eval: false
+```
